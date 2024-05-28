@@ -74,6 +74,7 @@ pub(crate) struct KCLCompletionItem {
 }
 
 /// Computes completions at the given position.
+/// Computes completions at the given position.
 pub(crate) fn completion(
     trigger_character: Option<char>,
     program: &Program,
@@ -89,6 +90,7 @@ pub(crate) fn completion(
         },
         None => {
             let mut completions: IndexSet<KCLCompletionItem> = IndexSet::new();
+            
             // Complete builtin pkgs if in import stmt
             completions.extend(completion_import_builtin_pkg(program, pos));
             if !completions.is_empty() {
@@ -110,30 +112,27 @@ pub(crate) fn completion(
                 // Complete builtin functions in root scope and lambda
                 match scope.get_kind() {
                     kclvm_sema::core::scope::ScopeKind::Local => {
+                        // Inside the lambda scope branch of the completion function
                         if let Some(local_scope) = gs.get_scopes().try_get_local_scope(&scope) {
                             match local_scope.get_kind() {
                                 kclvm_sema::core::scope::LocalSymbolScopeKind::Lambda => {
+                                    // Collect built-in functions
                                     completions.extend(BUILTIN_FUNCTIONS.iter().map(
                                         |(name, ty)| KCLCompletionItem {
-                                            label: func_ty_complete_label(
-                                                name,
-                                                &ty.into_func_type(),
-                                            ),
-                                            detail: Some(
-                                                ty.into_func_type().func_signature_str(name),
-                                            ),
+                                            label: func_ty_complete_label(name, &ty.into_func_type()),
+                                            detail: Some(ty.into_func_type().func_signature_str(name)),
                                             documentation: ty.ty_doc(),
                                             kind: Some(KCLCompletionItemKind::Function),
-                                            insert_text: Some(func_ty_complete_insert_text(
-                                                name,
-                                                &ty.into_func_type(),
-                                            )),
+                                            insert_text: Some(func_ty_complete_insert_text(name, &ty.into_func_type())),
                                         },
                                     ));
+
+                                    
                                 }
                                 _ => {}
                             }
                         }
+
                     }
                     kclvm_sema::core::scope::ScopeKind::Root => {
                         completions.extend(BUILTIN_FUNCTIONS.iter().map(|(name, ty)| {
@@ -148,6 +147,31 @@ pub(crate) fn completion(
                                 )),
                             }
                         }));
+                    }
+                }
+
+                // Integrate look_up_all_closest_symbols for symbol completion
+                let closest_symbols = gs.look_up_all_closest_symbols(pos);
+                for symbol_ref in closest_symbols {
+                    if let Some(symbol) = gs.get_symbols().get_symbol(symbol_ref) {
+                        let sema_info = symbol.get_sema_info();
+                        let name = symbol.get_name();
+                        match &sema_info.ty {
+                            Some(ty) => {
+                                let detail = match &ty.kind {
+                                    TypeKind::Function(func_ty) => func_ty.func_signature_str(&name),
+                                    _ => ty.ty_str(),
+                                };
+                                completions.insert(KCLCompletionItem {
+                                    label: name,
+                                    detail: Some(detail),
+                                    documentation: sema_info.doc.clone(),
+                                    kind: type_to_item_kind(ty),
+                                    insert_text: None,
+                                });
+                            }
+                            None => {}
+                        }
                     }
                 }
 
@@ -490,7 +514,8 @@ fn schema_ty_to_value_complete_item(schema_ty: &SchemaType) -> KCLCompletionItem
     );
     let detail = {
         let mut details = vec![];
-        details.push(schema_ty.schema_ty_signature_str());
+        let (pkgpath, rest_sign) = schema_ty.schema_ty_signature_str();
+        details.push(format!("{}\n\n{}", pkgpath, rest_sign));
         details.push("Attributes:".to_string());
         for (name, attr) in &schema_ty.attrs {
             details.push(format!(
@@ -543,7 +568,8 @@ fn schema_ty_to_value_complete_item(schema_ty: &SchemaType) -> KCLCompletionItem
 fn schema_ty_to_type_complete_item(schema_ty: &SchemaType) -> KCLCompletionItem {
     let detail = {
         let mut details = vec![];
-        details.push(schema_ty.schema_ty_signature_str());
+        let (pkgpath, rest_sign) = schema_ty.schema_ty_signature_str();
+        details.push(format!("{}\n\n{}", pkgpath, rest_sign));
         details.push("Attributes:".to_string());
         for (name, attr) in &schema_ty.attrs {
             details.push(format!(
@@ -1259,7 +1285,7 @@ mod tests {
                         label: "Person(b){}".to_string(),
                         kind: Some(CompletionItemKind::CLASS),
                         detail: Some(
-                            "__main__\n\nschema Person\\[b: int](Base)\nAttributes:\nc: int"
+                            "__main__\n\nschema Person[b: int](Base):\nAttributes:\nc: int"
                                 .to_string()
                         ),
                         documentation: Some(lsp_types::Documentation::String("".to_string())),

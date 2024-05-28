@@ -1,3 +1,5 @@
+//scope.rs
+
 use std::collections::HashMap;
 
 use indexmap::{IndexMap, IndexSet};
@@ -558,5 +560,10 @@ impl LocalSymbolScope {
     #[inline]
     pub fn set_owner(&mut self, owner: SymbolRef) {
         self.owner = Some(owner)
+    }
+    
+    #[inline]
+    pub fn get_all_local_symbols(&self) -> Vec<SymbolRef> {
+        self.defs.values().cloned().collect()
     }
 }

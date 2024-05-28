@@ -242,6 +242,49 @@ impl GlobalState {
         }
     }
 
+    pub fn look_up_all_closest_symbols(&self, pos: &Position) -> Vec<SymbolRef> {
+        let mut closest_symbols = Vec::new();
+    
+        if let Some(file_sema_info) = self.sema_db.file_sema_map.get(&pos.filename) {
+            let candidate = file_sema_info.look_up_closest_symbol(&CachedLocation {
+                line: pos.line,
+                column: pos.column.unwrap_or(0),
+            });
+    
+            if let Some(candidate_ref) = candidate {
+                closest_symbols.push(candidate_ref);
+            }
+    
+            if let Some(parent_scope_ref) = self.look_up_scope(pos) {
+                let candidate_symbol = self.symbols.get_symbol(candidate.unwrap()).unwrap();
+                let (start, _) = candidate_symbol.get_range();
+                let parent_scope = self.scopes.get_scope(&parent_scope_ref).unwrap();
+                
+                if parent_scope.contains_pos(&start) {
+                    let barrier_scope = self.look_up_closest_sub_scope(parent_scope_ref, pos);
+                    
+                    if let Some(barrier_scope) = barrier_scope {
+                        let barrier_scope = self.scopes.locals.get(barrier_scope.id).unwrap();
+                        if barrier_scope.end.less(&candidate_symbol.get_range().0) {
+                            return closest_symbols;
+                        } else {
+                            let barrier_symbol = file_sema_info.look_up_closest_symbol(&CachedLocation {
+                                line: barrier_scope.start.line,
+                                column: barrier_scope.start.column.unwrap_or(0),
+                            });
+    
+                            if let Some(barrier_symbol_ref) = barrier_symbol {
+                                closest_symbols.push(barrier_symbol_ref);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        closest_symbols
+    }    
+        
     /// look up exact symbol by specific position, which means  
     /// the specified position is within the range of the returned symbol
     ///
